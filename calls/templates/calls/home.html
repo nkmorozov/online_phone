@@ -1,0 +1,58 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Phone</title>
+    <link rel="stylesheet" href="{% static 'calls/styles.css' %}">
+</head>
+<body>
+    <main class="page">
+        <div class="center-block">
+            <h1 class="site-title">Online Phone</h1>
+
+            <section class="call-card">
+                <div class="link-row">
+                    <input class="call-link" type="text" value="{{ call_link }}" readonly>
+                    <button class="button" onclick="copyLink()">Скопировать</button>
+                </div>
+
+                <div class="connect-row">
+                    <p class="hint">Отправь ссылку собеседнику и жми кнопку «Подключиться» 😀</p>
+                    <a class="button button-primary" href="{{ call_link }}">Подключиться</a>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script>
+        async function copyLink() {
+            const input = document.querySelector('.call-link');
+            const button = document.querySelector('.link-row .button');
+            const text = input.value;
+
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                } else {
+                    input.focus();
+                    input.select();
+                    input.setSelectionRange(0, text.length);
+                    document.execCommand('copy');
+                }
+
+                button.textContent = 'Скопировано';
+                setTimeout(() => {
+                    button.textContent = 'Скопировать';
+                }, 1500);
+            } catch (error) {
+                input.focus();
+                input.select();
+                alert('Не получилось скопировать автоматически. Скопируй ссылку вручную.');
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,224 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Звонок</title>
+    <link rel="stylesheet" href="{% static 'calls/styles.css' %}">
+</head>
+<body>
+    <main class="page">
+        <section class="call-card call-room-card">
+            <p id="waiting-message" class="waiting-text">
+                Разрешите доступ к камере и микрофону
+            </p>
+
+            <div class="video-layout">
+                <video id="remote-video" autoplay playsinline></video>
+                <video id="local-video" autoplay muted playsinline></video>
+            </div>
+
+            <div class="call-actions">
+                <button id="end-call-button" class="button button-danger">
+                    Завершить звонок
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const roomId = "{{ room_id }}";
+        const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+
+        const waitingMessage = document.getElementById('waiting-message');
+        const localVideo = document.getElementById('local-video');
+        const remoteVideo = document.getElementById('remote-video');
+        const endCallButton = document.getElementById('end-call-button');
+
+        let isInitiator = false;
+        let localStream = null;
+        let remoteStream = null;
+        let peerConnection = null;
+        let callStarted = false;
+        let pendingIceCandidates = [];
+        let usersCount = 0;
+
+        const socket = new WebSocket(
+            `${protocol}://${window.location.host}/ws/call/${roomId}/`
+        );
+
+        const localMediaPromise = startLocalMedia();
+
+        function updateWaitingMessage() {
+            if (usersCount >= 2) {
+                waitingMessage.textContent = 'Собеседник подключился';
+            } else {
+                waitingMessage.textContent = 'Ждем, пока ваш собеседник перейдет по ссылке';
+            }
+        }
+
+        async function startLocalMedia() {
+            localStream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true,
+            });
+
+            localVideo.srcObject = localStream;
+            updateWaitingMessage();
+        }
+
+        function createPeerConnection() {
+            if (peerConnection) {
+                return;
+            }
+
+            peerConnection = new RTCPeerConnection({
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                ],
+            });
+
+            remoteStream = new MediaStream();
+            remoteVideo.srcObject = remoteStream;
+
+            localStream.getTracks().forEach((track) => {
+                peerConnection.addTrack(track, localStream);
+            });
+
+            peerConnection.ontrack = function(event) {
+                event.streams[0].getTracks().forEach((track) => {
+                    remoteStream.addTrack(track);
+                });
+            };
+
+            peerConnection.onicecandidate = function(event) {
+                if (event.candidate) {
+                    sendSignal({
+                        type: 'ice-candidate',
+                        candidate: event.candidate,
+                    });
+                }
+            };
+
+            peerConnection.onconnectionstatechange = function() {
+                console.log('Connection state:', peerConnection.connectionState);
+
+                if (peerConnection.connectionState === 'connected') {
+                    waitingMessage.textContent = 'Вы в звонке';
+                }
+            };
+
+            peerConnection.oniceconnectionstatechange = function() {
+                console.log('ICE state:', peerConnection.iceConnectionState);
+            };
+
+            peerConnection.onicegatheringstatechange = function() {
+                console.log('ICE gathering:', peerConnection.iceGatheringState);
+            };
+        }
+
+        function sendSignal(data) {
+            socket.send(JSON.stringify(data));
+        }
+
+        async function addIceCandidate(candidate) {
+            if (peerConnection && peerConnection.remoteDescription) {
+                await peerConnection.addIceCandidate(candidate);
+            } else {
+                pendingIceCandidates.push(candidate);
+            }
+        }
+
+        async function flushPendingIceCandidates() {
+            for (const candidate of pendingIceCandidates) {
+                await peerConnection.addIceCandidate(candidate);
+            }
+
+            pendingIceCandidates = [];
+        }
+
+        async function startCallAsInitiator() {
+            if (callStarted) {
+                return;
+            }
+
+            callStarted = true;
+            await localMediaPromise;
+            createPeerConnection();
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+
+            sendSignal({
+                type: 'offer',
+                offer: offer,
+            });
+        }
+
+        socket.onmessage = async function(event) {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'connection_ready') {
+                isInitiator = data.is_initiator;
+            }
+
+            if (data.type === 'room_status') {
+                usersCount = data.users_count;
+                updateWaitingMessage();
+
+                if (usersCount === 2 && isInitiator) {
+                    await startCallAsInitiator();
+                }
+            }
+
+            if (data.type === 'offer') {
+                await localMediaPromise;
+                createPeerConnection();
+
+                await peerConnection.setRemoteDescription(data.offer);
+                await flushPendingIceCandidates();
+
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+
+                sendSignal({
+                    type: 'answer',
+                    answer: answer,
+                });
+            }
+
+            if (data.type === 'answer') {
+                await peerConnection.setRemoteDescription(data.answer);
+                await flushPendingIceCandidates();
+            }
+
+            if (data.type === 'ice-candidate') {
+                await localMediaPromise;
+                createPeerConnection();
+
+                await addIceCandidate(data.candidate);
+            }
+
+            if (data.type === 'room_full') {
+                waitingMessage.textContent = data.message;
+            }
+        };
+
+        endCallButton.addEventListener('click', function() {
+            if (localStream) {
+                localStream.getTracks().forEach((track) => track.stop());
+            }
+
+            if (peerConnection) {
+                peerConnection.close();
+            }
+
+            socket.close();
+            window.location.href = '/';
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,287 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: Arial, sans-serif;
+    color: #f5f5f5;
+    background: #202124;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.page {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+}
+
+.center-block {
+    position: relative;
+    width: min(1100px, 100%);
+}
+
+.center-block .call-card {
+    width: 100%;
+}
+
+.site-title {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 34px);
+    transform: translateX(-50%);
+    margin: 0;
+    color: #f5f5f5;
+    font-size: 46px;
+    font-weight: 800;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.call-card {
+    width: min(900px, 100%);
+    background: #3a3b3d;
+    border-radius: 28px;
+    padding: 48px;
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.35);
+}
+
+.title {
+    margin: 0 0 28px;
+    text-align: center;
+    font-size: 34px;
+    font-weight: 700;
+}
+
+.link-row {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 28px;
+}
+
+.call-link {
+    flex: 1;
+    min-width: 0;
+    padding: 18px 22px;
+    border: 0;
+    border-radius: 16px;
+    background: #2b2c2e;
+    color: #ffffff;
+    font-size: 22px;
+    outline: none;
+}
+
+.button {
+    border: 0;
+    border-radius: 16px;
+    padding: 18px 26px;
+    font-size: 20px;
+    font-weight: 700;
+    color: #ffffff;
+    background: #5f6368;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.button:hover {
+    background: #70757a;
+}
+
+.button-primary {
+    background: #00c853;
+}
+
+.button-primary:hover {
+    background: #00b84d;
+}
+
+.connect-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+}
+
+.hint {
+    margin: 0;
+    color: #d7d7d7;
+    font-size: 22px;
+    line-height: 1.4;
+}
+
+.waiting-text {
+    margin: 0;
+    text-align: center;
+    font-size: 32px;
+    font-weight: 700;
+}
+
+.waiting-subtitle {
+    margin: 18px 0 0;
+    text-align: center;
+    color: #c8c8c8;
+    font-size: 20px;
+}
+
+@media (max-width: 700px) {
+    .call-card {
+        padding: 28px;
+        border-radius: 22px;
+    }
+
+    .link-row,
+    .connect-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .call-link,
+    .button,
+    .hint {
+        font-size: 18px;
+    }
+}
+
+/* мобильные стили */
+
+@media (max-width: 700px) {
+    .page {
+        padding: 24px;
+    }
+
+    .center-block {
+        width: 100%;
+    }
+
+    .site-title {
+        font-size: 34px;
+        bottom: calc(100% + 24px);
+    }
+
+    .call-card {
+        padding: 28px;
+        border-radius: 22px;
+    }
+
+    .link-row {
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .connect-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 18px;
+    }
+
+    .call-link {
+        width: 100%;
+        font-size: 18px;
+        padding: 18px;
+    }
+
+    .button {
+        width: 100%;
+        font-size: 18px;
+        padding: 18px;
+    }
+
+    .hint {
+        font-size: 20px;
+        text-align: center;
+    }
+
+    .waiting-text {
+        font-size: 24px;
+        line-height: 1.35;
+    }
+}
+
+#local-video {
+    width: 100%;
+    margin-top: 28px;
+    border-radius: 22px;
+    background: #202124;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+}
+
+.button-danger {
+    margin-top: 24px;
+    background: #e53935;
+}
+
+.button-danger:hover {
+    background: #d32f2f;
+}
+
+.call-room-card {
+    width: min(1100px, 100%);
+}
+
+.video-layout {
+    position: relative;
+    width: 100%;
+    margin-top: 28px;
+    border-radius: 22px;
+    overflow: hidden;
+    background: #202124;
+    aspect-ratio: 16 / 9;
+}
+
+#remote-video {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    background: #202124;
+}
+
+#local-video {
+    position: absolute;
+    right: 18px;
+    bottom: 18px;
+    width: 220px;
+    margin: 0;
+    border-radius: 16px;
+    border: 3px solid rgba(255, 255, 255, 0.75);
+    background: #111;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+}
+
+.call-actions {
+    display: flex;
+    justify-content: center;
+}
+
+.button-danger {
+    margin-top: 24px;
+    background: #e53935;
+}
+
+.button-danger:hover {
+    background: #d32f2f;
+}
+
+@media (max-width: 700px) {
+    .video-layout {
+        aspect-ratio: 9 / 14;
+    }
+
+    #local-video {
+        width: 42%;
+        right: 12px;
+        bottom: 12px;
+        border-radius: 12px;
+    }
+}
