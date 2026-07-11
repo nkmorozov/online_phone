@@ -1,0 +1,33 @@
+services:
+  web:
+    build: .
+    command: sh -c "python manage.py migrate && python manage.py collectstatic --noinput && daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+    env_file:
+      - .env
+    volumes:
+      - static_volume:/app/staticfiles
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - static_volume:/srv/static
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  static_volume:
+  caddy_data:
+  caddy_config:
