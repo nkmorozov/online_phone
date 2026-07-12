@@ -71,6 +71,19 @@
             }
         }
 
+
+
+        function maybeStartCall() {
+            if (usersCount === 2 && isInitiator && !callStarted) {
+                startCallAsInitiator().catch((error) => {
+                    console.log('Ошибка при старте звонка:', error);
+                });
+            }
+        }
+
+
+
+
         async function startLocalMedia() {
             console.log('Запрашиваем камеру и микрофон');
 
@@ -83,6 +96,7 @@
 
             localVideo.srcObject = localStream;
             updateWaitingMessage();
+            maybeStartCall();
         }
 
         function createPeerConnection() {
@@ -200,13 +214,14 @@
             if (data.type === 'connection_ready') {
                 isInitiator = data.is_initiator;
                 console.log('Этот браузер инициатор:', isInitiator);
+                maybeStartCall();
             }
 
             if (data.type === 'room_status') {
                 usersCount = data.users_count;
                 console.log('Количество пользователей в комнате:', usersCount);
-
                 updateWaitingMessage();
+                maybeStartCall();
 
                 if (usersCount === 2 && isInitiator) {
                     await startCallAsInitiator();
