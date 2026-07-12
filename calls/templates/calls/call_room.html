@@ -78,6 +78,14 @@
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' },
+                    {
+                        urls: [
+                            'turn:myonlinephone.ru:3478?transport=udp',
+                            'turn:myonlinephone.ru:3478?transport=tcp',
+                        ],
+                        username: 'onlinephone',
+                        credential: '3e3vbShvI7wmcRuHs+ggx3ciq2ZGb1dn',
+                    },
                 ],
             });
 
