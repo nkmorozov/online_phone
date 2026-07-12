@@ -61,6 +61,22 @@
             console.log('WebSocket ошибка:', error);
         };
 
+        remoteVideo.onloadedmetadata = function() {
+            console.log('remoteVideo metadata:', {
+                width: remoteVideo.videoWidth,
+                height: remoteVideo.videoHeight,
+                readyState: remoteVideo.readyState,
+            });
+        };
+
+        remoteVideo.onplaying = function() {
+            console.log('remoteVideo playing');
+        };
+
+        remoteVideo.onerror = function() {
+            console.log('remoteVideo error:', remoteVideo.error);
+        };
+
         const localMediaPromise = startLocalMedia();
 
         function updateWaitingMessage() {
@@ -71,8 +87,6 @@
             }
         }
 
-
-
         function maybeStartCall() {
             if (usersCount === 2 && isInitiator && !callStarted) {
                 startCallAsInitiator().catch((error) => {
@@ -80,9 +94,6 @@
                 });
             }
         }
-
-
-
 
         async function startLocalMedia() {
             console.log('Запрашиваем камеру и микрофон');
@@ -99,6 +110,32 @@
             maybeStartCall();
         }
 
+        function attachRemoteTrack(event) {
+            console.log('Получили remote track:', event.track.kind);
+
+            if (event.streams && event.streams[0]) {
+                console.log('Подключаем remote stream из event.streams[0]');
+                remoteVideo.srcObject = event.streams[0];
+            } else {
+                console.log('Подключаем remote track вручную через MediaStream');
+                remoteStream.addTrack(event.track);
+                remoteVideo.srcObject = remoteStream;
+            }
+
+            remoteVideo.autoplay = true;
+            remoteVideo.playsInline = true;
+
+            remoteVideo.play().then(() => {
+                console.log('remoteVideo play ok:', {
+                    width: remoteVideo.videoWidth,
+                    height: remoteVideo.videoHeight,
+                    readyState: remoteVideo.readyState,
+                });
+            }).catch((error) => {
+                console.log('remoteVideo play error:', error);
+            });
+        }
+
         function createPeerConnection() {
             if (peerConnection) {
                 return;
@@ -109,8 +146,6 @@
             peerConnection = new RTCPeerConnection({
                 iceTransportPolicy: 'relay',
                 iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
                     {
                         urls: [
                             'turn:myonlinephone.ru:3478?transport=udp',
@@ -129,13 +164,7 @@
                 peerConnection.addTrack(track, localStream);
             });
 
-            peerConnection.ontrack = function(event) {
-                console.log('Получили remote track:', event.track.kind);
-
-                event.streams[0].getTracks().forEach((track) => {
-                    remoteStream.addTrack(track);
-                });
-            };
+            peerConnection.ontrack = attachRemoteTrack;
 
             peerConnection.onicecandidate = function(event) {
                 if (event.candidate) {
@@ -145,7 +174,17 @@
                         type: 'ice-candidate',
                         candidate: event.candidate,
                     });
+                } else {
+                    console.log('ICE candidates закончились');
                 }
+            };
+
+            peerConnection.onicecandidateerror = function(event) {
+                console.log('ICE candidate error:', {
+                    url: event.url,
+                    errorCode: event.errorCode,
+                    errorText: event.errorText,
+                });
             };
 
             peerConnection.onconnectionstatechange = function() {
