@@ -49,6 +49,18 @@
             `${protocol}://${window.location.host}/ws/call/${roomId}/`
         );
 
+        socket.onopen = function() {
+            console.log('WebSocket открыт');
+        };
+
+        socket.onclose = function(event) {
+            console.log('WebSocket закрыт:', event.code, event.reason);
+        };
+
+        socket.onerror = function(error) {
+            console.log('WebSocket ошибка:', error);
+        };
+
         const localMediaPromise = startLocalMedia();
 
         function updateWaitingMessage() {
@@ -60,10 +72,14 @@
         }
 
         async function startLocalMedia() {
+            console.log('Запрашиваем камеру и микрофон');
+
             localStream = await navigator.mediaDevices.getUserMedia({
                 video: true,
                 audio: true,
             });
+
+            console.log('Камера и микрофон получены');
 
             localVideo.srcObject = localStream;
             updateWaitingMessage();
@@ -73,6 +89,8 @@
             if (peerConnection) {
                 return;
             }
+
+            console.log('Создаем RTCPeerConnection');
 
             peerConnection = new RTCPeerConnection({
                 iceTransportPolicy: 'relay',
@@ -98,6 +116,8 @@
             });
 
             peerConnection.ontrack = function(event) {
+                console.log('Получили remote track:', event.track.kind);
+
                 event.streams[0].getTracks().forEach((track) => {
                     remoteStream.addTrack(track);
                 });
@@ -105,6 +125,8 @@
 
             peerConnection.onicecandidate = function(event) {
                 if (event.candidate) {
+                    console.log('Отправляем ICE candidate:', event.candidate.candidate);
+
                     sendSignal({
                         type: 'ice-candidate',
                         candidate: event.candidate,
@@ -130,6 +152,7 @@
         }
 
         function sendSignal(data) {
+            console.log('Отправляем WebSocket-сообщение:', data);
             socket.send(JSON.stringify(data));
         }
 
@@ -154,6 +177,8 @@
                 return;
             }
 
+            console.log('Стартуем как инициатор, создаем offer');
+
             callStarted = true;
             await localMediaPromise;
             createPeerConnection();
@@ -170,12 +195,17 @@
         socket.onmessage = async function(event) {
             const data = JSON.parse(event.data);
 
+            console.log('Получено WebSocket-сообщение:', data);
+
             if (data.type === 'connection_ready') {
                 isInitiator = data.is_initiator;
+                console.log('Этот браузер инициатор:', isInitiator);
             }
 
             if (data.type === 'room_status') {
                 usersCount = data.users_count;
+                console.log('Количество пользователей в комнате:', usersCount);
+
                 updateWaitingMessage();
 
                 if (usersCount === 2 && isInitiator) {
@@ -184,6 +214,8 @@
             }
 
             if (data.type === 'offer') {
+                console.log('Получили offer');
+
                 await localMediaPromise;
                 createPeerConnection();
 
@@ -200,11 +232,15 @@
             }
 
             if (data.type === 'answer') {
+                console.log('Получили answer');
+
                 await peerConnection.setRemoteDescription(data.answer);
                 await flushPendingIceCandidates();
             }
 
             if (data.type === 'ice-candidate') {
+                console.log('Получили ICE candidate');
+
                 await localMediaPromise;
                 createPeerConnection();
 
