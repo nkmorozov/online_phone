@@ -44,10 +44,17 @@
         let callStarted = false;
         let pendingIceCandidates = [];
         let usersCount = 0;
+        let mediaErrorMessage = '';
+        let playbackUnlockArmed = false;
+
+        prepareVideoElement(localVideo, true);
+        prepareVideoElement(remoteVideo, false);
 
         const socket = new WebSocket(
             `${protocol}://${window.location.host}/ws/call/${roomId}/`
         );
+
+        const localMediaPromise = startLocalMedia();
 
         socket.onopen = function() {
             console.log('WebSocket открыт');
@@ -61,25 +68,63 @@
             console.log('WebSocket ошибка:', error);
         };
 
+        localVideo.onloadedmetadata = function() {
+            console.log('localVideo metadata:', {
+                width: localVideo.videoWidth,
+                height: localVideo.videoHeight,
+                readyState: localVideo.readyState,
+            });
+
+            playVideo(localVideo, 'localVideo');
+        };
+
         remoteVideo.onloadedmetadata = function() {
             console.log('remoteVideo metadata:', {
                 width: remoteVideo.videoWidth,
                 height: remoteVideo.videoHeight,
                 readyState: remoteVideo.readyState,
             });
+
+            playVideo(remoteVideo, 'remoteVideo');
         };
 
         remoteVideo.onplaying = function() {
             console.log('remoteVideo playing');
         };
 
+        localVideo.onerror = function() {
+            console.log('localVideo error:', localVideo.error);
+        };
+
         remoteVideo.onerror = function() {
             console.log('remoteVideo error:', remoteVideo.error);
         };
 
-        const localMediaPromise = startLocalMedia();
+        function prepareVideoElement(videoElement, muted) {
+            videoElement.autoplay = true;
+            videoElement.playsInline = true;
+            videoElement.muted = muted;
+
+            videoElement.setAttribute('autoplay', '');
+            videoElement.setAttribute('playsinline', '');
+            videoElement.setAttribute('webkit-playsinline', '');
+
+            if (muted) {
+                videoElement.setAttribute('muted', '');
+            }
+        }
 
         function updateWaitingMessage() {
+            if (mediaErrorMessage) {
+                waitingMessage.textContent = mediaErrorMessage;
+                return;
+            }
+
+            if (peerConnection && peerConnection.connectionState === 'connected') {
+                waitingMessage.textContent = 'Вы в звонке';
+                return;
+            }
+
             if (usersCount >= 2) {
                 waitingMessage.textContent = 'Собеседник подключился';
             } else {
@@ -88,7 +133,7 @@
         }
 
         function maybeStartCall() {
-            if (usersCount === 2 && isInitiator && !callStarted) {
+            if (usersCount === 2 && isInitiator && !callStarted && localStream) {
                 startCallAsInitiator().catch((error) => {
                     console.log('Ошибка при старте звонка:', error);
                 });
@@ -98,16 +143,123 @@
         async function startLocalMedia() {
             console.log('Запрашиваем камеру и микрофон');
 
-            localStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: true,
-            });
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: { ideal: 'user' },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                    },
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                    },
+                });
 
-            console.log('Камера и микрофон получены');
+                console.log('Камера и микрофон получены');
 
-            localVideo.srcObject = localStream;
-            updateWaitingMessage();
-            maybeStartCall();
+                localStream.getTracks().forEach((track) => {
+                    console.log('Local track:', {
+                        kind: track.kind,
+                        label: track.label,
+                        enabled: track.enabled,
+                        readyState: track.readyState,
+                    });
+
+                    track.onended = function() {
+                        console.log('Local track ended:', track.kind);
+                    };
+                });
+
+                localVideo.srcObject = localStream;
+                await playVideo(localVideo, 'localVideo');
+
+                updateWaitingMessage();
+                maybeStartCall();
+
+                return localStream;
+            } catch (error) {
+                console.log('Ошибка доступа к камере/микрофону:', error);
+
+                mediaErrorMessage = getMediaErrorMessage(error);
+                waitingMessage.textContent = mediaErrorMessage;
+
+                throw error;
+            }
+        }
+
+        function getMediaErrorMessage(error) {
+            if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                return 'Доступ к камере или микрофону запрещен';
+            }
+
+            if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                return 'Камера или микрофон не найдены';
+            }
+
+            if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                return 'Камера или микрофон уже используются другим приложением';
+            }
+
+            if (error.name === 'OverconstrainedError') {
+                return 'Камера не поддерживает запрошенные параметры';
+            }
+
+            return 'Не удалось получить камеру и микрофон';
+        }
+
+        async function playVideo(videoElement, label) {
+            if (!videoElement.srcObject) {
+                return;
+            }
+
+            try {
+                await videoElement.play();
+
+                console.log(`${label} play ok:`, {
+                    width: videoElement.videoWidth,
+                    height: videoElement.videoHeight,
+                    readyState: videoElement.readyState,
+                });
+            } catch (error) {
+                console.log(`${label} play error:`, error);
+                armPlaybackUnlock();
+            }
+        }
+
+        function armPlaybackUnlock() {
+            if (playbackUnlockArmed) {
+                return;
+            }
+
+            playbackUnlockArmed = true;
+            waitingMessage.textContent = 'Нажмите на экран, чтобы запустить видео';
+
+            const unlock = async function() {
+                playbackUnlockArmed = false;
+
+                document.removeEventListener('click', unlock);
+                document.removeEventListener('touchend', unlock);
+
+                await playVideo(localVideo, 'localVideo');
+                await playVideo(remoteVideo, 'remoteVideo');
+
+                updateWaitingMessage();
+            };
+
+            document.addEventListener('click', unlock);
+            document.addEventListener('touchend', unlock);
+        }
+
+        async function ensureLocalMedia() {
+            await localMediaPromise;
+
+            if (!localStream) {
+                throw new Error('localStream is not available');
+            }
+
+            return localStream;
         }
 
         function attachRemoteTrack(event) {
@@ -118,34 +270,35 @@
                 remoteVideo.srcObject = event.streams[0];
             } else {
                 console.log('Подключаем remote track вручную через MediaStream');
+
+                if (!remoteStream) {
+                    remoteStream = new MediaStream();
+                }
+
                 remoteStream.addTrack(event.track);
                 remoteVideo.srcObject = remoteStream;
             }
 
-            remoteVideo.autoplay = true;
-            remoteVideo.playsInline = true;
-
-            remoteVideo.play().then(() => {
-                console.log('remoteVideo play ok:', {
-                    width: remoteVideo.videoWidth,
-                    height: remoteVideo.videoHeight,
-                    readyState: remoteVideo.readyState,
-                });
-            }).catch((error) => {
-                console.log('remoteVideo play error:', error);
-            });
+            playVideo(remoteVideo, 'remoteVideo');
         }
 
-        function createPeerConnection() {
+        async function createPeerConnection() {
             if (peerConnection) {
-                return;
+                return peerConnection;
             }
+
+            await ensureLocalMedia();
 
             console.log('Создаем RTCPeerConnection');
 
             peerConnection = new RTCPeerConnection({
-                iceTransportPolicy: 'relay',
                 iceServers: [
+                    {
+                        urls: [
+                            'stun:stun.l.google.com:19302',
+                            'stun:myonlinephone.ru:3478',
+                        ],
+                    },
                     {
                         urls: [
                             'turn:myonlinephone.ru:3478?transport=udp',
@@ -161,6 +314,7 @@
             remoteVideo.srcObject = remoteStream;
 
             localStream.getTracks().forEach((track) => {
+                console.log('Добавляем local track в peerConnection:', track.kind);
                 peerConnection.addTrack(track, localStream);
             });
 
@@ -193,6 +347,13 @@
                 if (peerConnection.connectionState === 'connected') {
                     waitingMessage.textContent = 'Вы в звонке';
                 }
+
+                if (
+                    peerConnection.connectionState === 'failed' ||
+                    peerConnection.connectionState === 'disconnected'
+                ) {
+                    waitingMessage.textContent = 'Соединение прервалось';
+                }
             };
 
             peerConnection.oniceconnectionstatechange = function() {
@@ -202,24 +363,56 @@
             peerConnection.onicegatheringstatechange = function() {
                 console.log('ICE gathering:', peerConnection.iceGatheringState);
             };
+
+            peerConnection.onsignalingstatechange = function() {
+                console.log('Signaling state:', peerConnection.signalingState);
+            };
+
+            return peerConnection;
         }
 
         function sendSignal(data) {
             console.log('Отправляем WebSocket-сообщение:', data);
-            socket.send(JSON.stringify(data));
+
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(data));
+                return;
+            }
+
+            socket.addEventListener('open', function() {
+                socket.send(JSON.stringify(data));
+            }, { once: true });
         }
 
         async function addIceCandidate(candidate) {
+            if (!candidate) {
+                return;
+            }
+
+            const rtcCandidate = new RTCIceCandidate(candidate);
+
             if (peerConnection && peerConnection.remoteDescription) {
-                await peerConnection.addIceCandidate(candidate);
+                try {
+                    await peerConnection.addIceCandidate(rtcCandidate);
+                } catch (error) {
+                    console.log('Ошибка addIceCandidate:', error, rtcCandidate);
+                }
             } else {
-                pendingIceCandidates.push(candidate);
+                pendingIceCandidates.push(rtcCandidate);
             }
         }
 
         async function flushPendingIceCandidates() {
+            if (!peerConnection || !peerConnection.remoteDescription) {
+                return;
+            }
+
             for (const candidate of pendingIceCandidates) {
-                await peerConnection.addIceCandidate(candidate);
+                try {
+                    await peerConnection.addIceCandidate(candidate);
+                } catch (error) {
+                    console.log('Ошибка addIceCandidate из очереди:', error, candidate);
+                }
             }
 
             pendingIceCandidates = [];
@@ -233,15 +426,15 @@
             console.log('Стартуем как инициатор, создаем offer');
 
             callStarted = true;
-            await localMediaPromise;
-            createPeerConnection();
 
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
+            const connection = await createPeerConnection();
+            const offer = await connection.createOffer();
+
+            await connection.setLocalDescription(offer);
 
             sendSignal({
                 type: 'offer',
-                offer: offer,
+                offer: connection.localDescription,
             });
         }
 
@@ -254,6 +447,7 @@
                 isInitiator = data.is_initiator;
                 console.log('Этот браузер инициатор:', isInitiator);
                 maybeStartCall();
+                return;
             }
 
             if (data.type === 'room_status') {
@@ -261,44 +455,49 @@
                 console.log('Количество пользователей в комнате:', usersCount);
                 updateWaitingMessage();
                 maybeStartCall();
-
-                if (usersCount === 2 && isInitiator) {
-                    await startCallAsInitiator();
-                }
+                return;
             }
 
             if (data.type === 'offer') {
                 console.log('Получили offer');
 
-                await localMediaPromise;
-                createPeerConnection();
+                const connection = await createPeerConnection();
 
-                await peerConnection.setRemoteDescription(data.offer);
+                await connection.setRemoteDescription(data.offer);
                 await flushPendingIceCandidates();
 
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
+                const answer = await connection.createAnswer();
+                await connection.setLocalDescription(answer);
 
                 sendSignal({
                     type: 'answer',
-                    answer: answer,
+                    answer: connection.localDescription,
                 });
+
+                return;
             }
 
             if (data.type === 'answer') {
                 console.log('Получили answer');
 
+                if (!peerConnection) {
+                    console.log('answer получен до создания peerConnection');
+                    return;
+                }
+
                 await peerConnection.setRemoteDescription(data.answer);
                 await flushPendingIceCandidates();
+
+                return;
             }
 
             if (data.type === 'ice-candidate') {
                 console.log('Получили ICE candidate');
 
-                await localMediaPromise;
-                createPeerConnection();
-
+                await createPeerConnection();
                 await addIceCandidate(data.candidate);
+
+                return;
             }
 
             if (data.type === 'room_full') {
