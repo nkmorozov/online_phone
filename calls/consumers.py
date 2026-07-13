@@ -52,7 +52,7 @@ class CallConsumer(AsyncWebsocketConsumer):
         previous_count, users_count = await self.add_user_to_room()
 
         if previous_count == -1:
-            await self.send_json({
+            await self.send_payload({
                 'type': 'room_full',
                 'message': 'Комната уже занята',
             })
@@ -63,7 +63,7 @@ class CallConsumer(AsyncWebsocketConsumer):
         self.joined_room = True
         active_connections[self.channel_name] = self
 
-        await self.send_json({
+        await self.send_payload({
             'type': 'connection_ready',
             'is_initiator': self.is_initiator,
         })
@@ -124,17 +124,8 @@ class CallConsumer(AsyncWebsocketConsumer):
 
             connection = active_connections.get(channel_name)
 
-            if connection:
-                await connection.send_json(message)
-                continue
+            if connection is not None:
+                await connection.send_payload(message)
 
-            await self.channel_layer.send(channel_name, {
-                'type': 'relay_message',
-                'message': message,
-            })
-
-    async def relay_message(self, event):
-        await self.send_json(event['message'])
-
-    async def send_json(self, data):
+    async def send_payload(self, data):
         await self.send(text_data=json.dumps(data))
