@@ -5,53 +5,297 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Online Phone</title>
+    <title>Звонок</title>
     <link rel="stylesheet" href="{% static 'calls/styles.css' %}">
 </head>
 <body>
     <main class="page">
-        <div class="center-block">
-            <h1 class="site-title">Online Phone</h1>
+        <section class="call-card call-room-card">
+            <p id="waiting-message" class="waiting-text">
+                Нажмите «Подключиться», чтобы включить камеру и микрофон
+            </p>
 
-            <section class="call-card">
-                <div class="link-row">
-                    <input class="call-link" type="text" value="{{ call_link }}" readonly>
-                    <button class="button" onclick="copyLink()">Скопировать</button>
-                </div>
+            <div class="video-layout">
+                <video id="remote-video" autoplay playsinline></video>
+                <video id="local-video" autoplay muted playsinline></video>
+            </div>
 
-                <div class="connect-row">
-                    <p class="hint">Отправь ссылку собеседнику и жми кнопку «Подключиться» 😀</p>
-                    <a class="button button-primary" href="{{ call_link }}">Подключиться</a>
-                </div>
-            </section>
-        </div>
+            <div class="call-actions" style="gap: 14px; flex-wrap: wrap;">
+                <button id="connect-button" class="button button-primary" style="margin-top: 24px;">
+                    Подключиться
+                </button>
+
+                <button id="end-call-button" class="button button-danger">
+                    Завершить звонок
+                </button>
+            </div>
+        </section>
     </main>
 
     <script>
-        async function copyLink() {
-            const input = document.querySelector('.call-link');
-            const button = document.querySelector('.link-row .button');
-            const text = input.value;
+        const roomId = "{{ room_id }}";
+        const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
 
-            try {
-                if (navigator.clipboard && window.isSecureContext) {
-                    await navigator.clipboard.writeText(text);
-                } else {
-                    input.focus();
-                    input.select();
-                    input.setSelectionRange(0, text.length);
-                    document.execCommand('copy');
+        const waitingMessage = document.getElementById('waiting-message');
+        const connectButton = document.getElementById('connect-button');
+        const endCallButton = document.getElementById('end-call-button');
+        const localVideo = document.getElementById('local-video');
+        const remoteVideo = document.getElementById('remote-video');
+
+        let socket = null;
+        let peerConnection = null;
+        let localStream = null;
+
+        let isInitiator = false;
+        let usersCount = 0;
+        let isConnectedByButton = false;
+        let offerWasSent = false;
+
+        let pendingOffer = null;
+        let pendingIceCandidates = [];
+
+        socket = new WebSocket(`${wsProtocol}://${window.location.host}/ws/call/${roomId}/`);
+
+        socket.onmessage = async function(event) {
+            const data = JSON.parse(event.data);
+            console.log('Получено WebSocket-сообщение:', data);
+
+            if (data.type === 'connection_ready') {
+                isInitiator = data.is_initiator;
+                return;
+            }
+
+            if (data.type === 'room_status') {
+                usersCount = data.users_count;
+                updateText();
+                await maybeStartCall();
+                return;
+            }
+
+            if (data.type === 'offer') {
+                pendingOffer = data.offer;
+
+                if (isConnectedByButton) {
+                    await answerOffer();
                 }
 
-                button.textContent = 'Скопировано';
-                setTimeout(() => {
-                    button.textContent = 'Скопировать';
-                }, 1500);
-            } catch (error) {
-                input.focus();
-                input.select();
-                alert('Не получилось скопировать автоматически. Скопируй ссылку вручную.');
+                return;
             }
+
+            if (data.type === 'answer') {
+                if (peerConnection && !peerConnection.currentRemoteDescription) {
+                    await peerConnection.setRemoteDescription(data.answer);
+                    await addPendingIceCandidates();
+                }
+
+                return;
+            }
+
+            if (data.type === 'ice-candidate') {
+                await addIceCandidate(data.candidate);
+                return;
+            }
+
+            if (data.type === 'room_full') {
+                waitingMessage.textContent = data.message;
+            }
+        };
+
+        connectButton.addEventListener('click', async function() {
+            connectButton.disabled = true;
+            connectButton.textContent = 'Подключаемся...';
+
+            try {
+                await startLocalMedia();
+
+                isConnectedByButton = true;
+                connectButton.hidden = true;
+
+                updateText();
+                await maybeStartCall();
+            } catch (error) {
+                console.log('Ошибка доступа к камере или микрофону:', error);
+
+                connectButton.disabled = false;
+                connectButton.textContent = 'Подключиться';
+                waitingMessage.textContent = 'Доступ к камере или микрофону запрещен';
+            }
+        });
+
+        endCallButton.addEventListener('click', function() {
+            if (localStream) {
+                localStream.getTracks().forEach((track) => track.stop());
+            }
+
+            if (peerConnection) {
+                peerConnection.close();
+            }
+
+            if (socket) {
+                socket.close();
+            }
+
+            window.location.href = '/';
+        });
+
+        async function startLocalMedia() {
+            localStream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true,
+            });
+
+            localVideo.srcObject = localStream;
+            await localVideo.play();
+        }
+
+        async function maybeStartCall() {
+            if (!isConnectedByButton || usersCount < 2) {
+                return;
+            }
+
+            if (isInitiator && !offerWasSent) {
+                await createPeerConnection();
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+
+                sendSignal({
+                    type: 'offer',
+                    offer: peerConnection.localDescription,
+                });
+
+                offerWasSent = true;
+            }
+
+            if (!isInitiator && pendingOffer) {
+                await answerOffer();
+            }
+        }
+
+        async function answerOffer() {
+            await createPeerConnection();
+
+            if (peerConnection.currentRemoteDescription) {
+                return;
+            }
+
+            await peerConnection.setRemoteDescription(pendingOffer);
+            await addPendingIceCandidates();
+
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+
+            sendSignal({
+                type: 'answer',
+                answer: peerConnection.localDescription,
+            });
+        }
+
+        async function createPeerConnection() {
+            if (peerConnection) {
+                return;
+            }
+
+            peerConnection = new RTCPeerConnection({
+                iceServers: [
+                    {
+                        urls: [
+                            'stun:stun.l.google.com:19302',
+                            'stun:myonlinephone.ru:3478',
+                        ],
+                    },
+                    {
+                        urls: [
+                            'turn:myonlinephone.ru:3478?transport=udp',
+                            'turn:myonlinephone.ru:3478?transport=tcp',
+                        ],
+                        username: 'onlinephone',
+                        credential: '9b1ab5f3f447e9017cd12ab872a5e2f5',
+                    },
+                ],
+            });
+
+            localStream.getTracks().forEach((track) => {
+                peerConnection.addTrack(track, localStream);
+            });
+
+            peerConnection.ontrack = async function(event) {
+                remoteVideo.srcObject = event.streams[0];
+                await remoteVideo.play();
+            };
+
+            peerConnection.onicecandidate = function(event) {
+                if (event.candidate) {
+                    sendSignal({
+                        type: 'ice-candidate',
+                        candidate: event.candidate,
+                    });
+                }
+            };
+
+            peerConnection.onconnectionstatechange = function() {
+                console.log('Connection state:', peerConnection.connectionState);
+
+                if (peerConnection.connectionState === 'connected') {
+                    waitingMessage.textContent = isInitiator
+                        ? 'Собеседник подключился'
+                        : 'Подключение установлено.';
+                }
+
+                if (
+                    peerConnection.connectionState === 'failed' ||
+                    peerConnection.connectionState === 'disconnected'
+                ) {
+                    waitingMessage.textContent = 'Соединение прервалось';
+                }
+            };
+        }
+
+        async function addIceCandidate(candidate) {
+            if (!candidate) {
+                return;
+            }
+
+            if (!peerConnection || !peerConnection.currentRemoteDescription) {
+                pendingIceCandidates.push(candidate);
+                return;
+            }
+
+            await peerConnection.addIceCandidate(candidate);
+        }
+
+        async function addPendingIceCandidates() {
+            for (const candidate of pendingIceCandidates) {
+                await peerConnection.addIceCandidate(candidate);
+            }
+
+            pendingIceCandidates = [];
+        }
+
+        function sendSignal(data) {
+            const message = JSON.stringify(data);
+
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(message);
+                return;
+            }
+
+            socket.addEventListener('open', function() {
+                socket.send(message);
+            }, { once: true });
+        }
+
+        function updateText() {
+            if (!isConnectedByButton) {
+                return;
+            }
+
+            if (usersCount < 2) {
+                waitingMessage.textContent = 'Ждем, пока ваш собеседник перейдет по ссылке';
+                return;
+            }
+
+            waitingMessage.textContent = 'Собеседник подключился';
         }
     </script>
 </body>
