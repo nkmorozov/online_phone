@@ -5,7 +5,7 @@ from redis.asyncio import Redis
 
 
 ROOM_LIMIT = 2
-ROOM_TTL_SECONDS = 6 * 60 * 60
+ROOM_TTL_SECONDS = 2 * 60
 
 redis_client = None
 
@@ -61,23 +61,23 @@ class CallConsumer(AsyncWebsocketConsumer):
         self.is_initiator = previous_count == 0
         self.joined_room = True
 
-        await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
+        await self.channel_layer.group_add(self.room_group_name, self.channel_name)
 
         await self.send(text_data=json.dumps({
             'type': 'connection_ready',
             'is_initiator': self.is_initiator,
         }))
 
-        await self.send_room_status(users_count)
+        await self.send_room_status()
 
     async def disconnect(self, close_code):
         if not getattr(self, 'joined_room', False):
             return
 
-        users_count = await self.remove_user_from_room()
-
         await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+
+        users_count = await self.remove_user_from_room()
         await self.send_room_status(users_count)
 
     async def receive(self, text_data):
