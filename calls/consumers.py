@@ -1,14 +1,24 @@
 import json
 
 from channels.generic.websocket import AsyncWebsocketConsumer
-from django.conf import settings
 from redis.asyncio import Redis
 
 
 ROOM_LIMIT = 2
 ROOM_TTL_SECONDS = 6 * 60 * 60
 
-redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+redis_client = None
+
+
+def get_redis_client():
+    global redis_client
+
+    if redis_client is None:
+        from django.conf import settings
+        redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+    return redis_client
+
 
 JOIN_ROOM_SCRIPT = """
 local key = KEYS[1]
@@ -84,7 +94,7 @@ class CallConsumer(AsyncWebsocketConsumer):
         )
 
     async def add_user_to_room(self):
-        previous_count, users_count = await redis_client.eval(
+        previous_count, users_count = await get_redis_client().eval(
             JOIN_ROOM_SCRIPT,
             1,
             self.room_users_key,
@@ -96,18 +106,19 @@ class CallConsumer(AsyncWebsocketConsumer):
         return int(previous_count), int(users_count)
 
     async def remove_user_from_room(self):
-        await redis_client.srem(self.room_users_key, self.channel_name)
-        users_count = await redis_client.scard(self.room_users_key)
+        redis = get_redis_client()
+        await redis.srem(self.room_users_key, self.channel_name)
+        users_count = await redis.scard(self.room_users_key)
 
         if users_count == 0:
-            await redis_client.delete(self.room_users_key)
+            await redis.delete(self.room_users_key)
         else:
-            await redis_client.expire(self.room_users_key, ROOM_TTL_SECONDS)
+            await redis.expire(self.room_users_key, ROOM_TTL_SECONDS)
 
         return int(users_count)
 
     async def get_room_users_count(self):
-        return int(await redis_client.scard(self.room_users_key))
+        return int(await get_redis_client().scard(self.room_users_key))
 
     async def send_room_status(self, users_count=None):
         if users_count is None:
