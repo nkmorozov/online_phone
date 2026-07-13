@@ -12,7 +12,7 @@
     <main class="page">
         <section class="call-card call-room-card">
             <p id="waiting-message" class="waiting-text">
-                Нажмите «Подключиться», чтобы включить камеру и микрофон
+                Запрашиваем доступ к камере и микрофону
             </p>
 
             <div class="video-layout">
@@ -20,11 +20,7 @@
                 <video id="local-video" autoplay muted playsinline></video>
             </div>
 
-            <div class="call-actions" style="gap: 14px; flex-wrap: wrap;">
-                <button id="connect-button" class="button button-primary" style="margin-top: 24px;">
-                    Подключиться
-                </button>
-
+            <div class="call-actions">
                 <button id="end-call-button" class="button button-danger">
                     Завершить звонок
                 </button>
@@ -37,7 +33,6 @@
         const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
 
         const waitingMessage = document.getElementById('waiting-message');
-        const connectButton = document.getElementById('connect-button');
         const endCallButton = document.getElementById('end-call-button');
         const localVideo = document.getElementById('local-video');
         const remoteVideo = document.getElementById('remote-video');
@@ -48,17 +43,17 @@
 
         let isInitiator = false;
         let usersCount = 0;
-        let isConnectedByButton = false;
         let offerWasSent = false;
-
         let pendingOffer = null;
         let pendingIceCandidates = [];
 
         socket = new WebSocket(`${wsProtocol}://${window.location.host}/ws/call/${roomId}/`);
 
+        startLocalMedia();
+
         socket.onmessage = async function(event) {
             const data = JSON.parse(event.data);
-            console.log('Получено WebSocket-сообщение:', data);
+            console.log('Получено сообщение:', data);
 
             if (data.type === 'connection_ready') {
                 isInitiator = data.is_initiator;
@@ -67,23 +62,19 @@
 
             if (data.type === 'room_status') {
                 usersCount = data.users_count;
-                updateText();
+                updateWaitingText();
                 await maybeStartCall();
                 return;
             }
 
             if (data.type === 'offer') {
                 pendingOffer = data.offer;
-
-                if (isConnectedByButton) {
-                    await answerOffer();
-                }
-
+                await answerOfferIfReady();
                 return;
             }
 
             if (data.type === 'answer') {
-                if (peerConnection && !peerConnection.currentRemoteDescription) {
+                if (peerConnection && !peerConnection.remoteDescription) {
                     await peerConnection.setRemoteDescription(data.answer);
                     await addPendingIceCandidates();
                 }
@@ -100,27 +91,6 @@
                 waitingMessage.textContent = data.message;
             }
         };
-
-        connectButton.addEventListener('click', async function() {
-            connectButton.disabled = true;
-            connectButton.textContent = 'Подключаемся...';
-
-            try {
-                await startLocalMedia();
-
-                isConnectedByButton = true;
-                connectButton.hidden = true;
-
-                updateText();
-                await maybeStartCall();
-            } catch (error) {
-                console.log('Ошибка доступа к камере или микрофону:', error);
-
-                connectButton.disabled = false;
-                connectButton.textContent = 'Подключиться';
-                waitingMessage.textContent = 'Доступ к камере или микрофону запрещен';
-            }
-        });
 
         endCallButton.addEventListener('click', function() {
             if (localStream) {
@@ -139,43 +109,54 @@
         });
 
         async function startLocalMedia() {
-            localStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: true,
-            });
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: true,
+                });
 
-            localVideo.srcObject = localStream;
-            await localVideo.play();
+                localVideo.srcObject = localStream;
+                await localVideo.play();
+
+                updateWaitingText();
+                await maybeStartCall();
+                await answerOfferIfReady();
+            } catch (error) {
+                console.log('Ошибка доступа к камере или микрофону:', error);
+                waitingMessage.textContent = 'Доступ к камере или микрофону запрещен';
+            }
         }
 
         async function maybeStartCall() {
-            if (!isConnectedByButton || usersCount < 2) {
+            if (!localStream || usersCount < 2) {
                 return;
             }
 
-            if (isInitiator && !offerWasSent) {
-                await createPeerConnection();
-
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
-
-                sendSignal({
-                    type: 'offer',
-                    offer: peerConnection.localDescription,
-                });
-
-                offerWasSent = true;
+            if (!isInitiator || offerWasSent) {
+                return;
             }
 
-            if (!isInitiator && pendingOffer) {
-                await answerOffer();
-            }
-        }
-
-        async function answerOffer() {
             await createPeerConnection();
 
-            if (peerConnection.currentRemoteDescription) {
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+
+            sendSignal({
+                type: 'offer',
+                offer: peerConnection.localDescription,
+            });
+
+            offerWasSent = true;
+        }
+
+        async function answerOfferIfReady() {
+            if (!localStream || !pendingOffer || isInitiator) {
+                return;
+            }
+
+            await createPeerConnection();
+
+            if (peerConnection.remoteDescription) {
                 return;
             }
 
@@ -256,7 +237,7 @@
                 return;
             }
 
-            if (!peerConnection || !peerConnection.currentRemoteDescription) {
+            if (!peerConnection || !peerConnection.remoteDescription) {
                 pendingIceCandidates.push(candidate);
                 return;
             }
@@ -285,8 +266,8 @@
             }, { once: true });
         }
 
-        function updateText() {
-            if (!isConnectedByButton) {
+        function updateWaitingText() {
+            if (!localStream) {
                 return;
             }
 
