@@ -43,14 +43,14 @@ def get_redis_client():
 class CallConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.room_id = str(self.scope['url_route']['kwargs']['room_id'])
-        self.room_group_name = f'call_{self.room_id}'
         self.room_users_key = f'call:{self.room_id}:users'
         self.joined_room = False
+
+        await self.accept()
 
         previous_count, users_count = await self.add_user_to_room()
 
         if previous_count == -1:
-            await self.accept()
             await self.send(text_data=json.dumps({
                 'type': 'room_full',
                 'message': 'Комната уже занята',
@@ -61,36 +61,23 @@ class CallConsumer(AsyncWebsocketConsumer):
         self.is_initiator = previous_count == 0
         self.joined_room = True
 
-        await self.accept()
-        await self.channel_layer.group_add(self.room_group_name, self.channel_name)
-
         await self.send(text_data=json.dumps({
             'type': 'connection_ready',
             'is_initiator': self.is_initiator,
         }))
 
-        await self.send_room_status()
+        await self.send_room_status(users_count)
 
     async def disconnect(self, close_code):
         if not getattr(self, 'joined_room', False):
             return
-
-        await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
         users_count = await self.remove_user_from_room()
         await self.send_room_status(users_count)
 
     async def receive(self, text_data):
         data = json.loads(text_data)
-
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'signal_message',
-                'sender': self.channel_name,
-                'message': data,
-            },
-        )
+        await self.send_to_room(data, exclude_self=True)
 
     async def add_user_to_room(self):
         previous_count, users_count = await get_redis_client().eval(
@@ -117,27 +104,23 @@ class CallConsumer(AsyncWebsocketConsumer):
 
         return int(users_count)
 
-    async def get_room_users_count(self):
-        return int(await get_redis_client().scard(self.room_users_key))
-
-    async def send_room_status(self, users_count=None):
-        if users_count is None:
-            users_count = await self.get_room_users_count()
-
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'room_status',
-                'users_count': users_count,
-            },
-        )
-
-    async def room_status(self, event):
-        await self.send(text_data=json.dumps({
+    async def send_room_status(self, users_count):
+        await self.send_to_room({
             'type': 'room_status',
-            'users_count': event['users_count'],
-        }))
+            'users_count': users_count,
+        })
 
-    async def signal_message(self, event):
-        if event['sender'] != self.channel_name:
-            await self.send(text_data=json.dumps(event['message']))
+    async def send_to_room(self, message, exclude_self=False):
+        channel_names = await get_redis_client().smembers(self.room_users_key)
+
+        for channel_name in channel_names:
+            if exclude_self and channel_name == self.channel_name:
+                continue
+
+            await self.channel_layer.send(channel_name, {
+                'type': 'send_message',
+                'message': message,
+            })
+
+    async def send_message(self, event):
+        await self.send(text_data=json.dumps(event['message']))
