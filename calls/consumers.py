@@ -9,17 +9,6 @@ ROOM_TTL_SECONDS = 6 * 60 * 60
 
 redis_client = None
 
-
-def get_redis_client():
-    global redis_client
-
-    if redis_client is None:
-        from django.conf import settings
-        redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
-
-    return redis_client
-
-
 JOIN_ROOM_SCRIPT = """
 local key = KEYS[1]
 local channel_name = ARGV[1]
@@ -39,6 +28,16 @@ redis.call('EXPIRE', key, ttl)
 
 return {previous_count, previous_count + 1}
 """
+
+
+def get_redis_client():
+    global redis_client
+
+    if redis_client is None:
+        from django.conf import settings
+        redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+    return redis_client
 
 
 class CallConsumer(AsyncWebsocketConsumer):
@@ -107,6 +106,7 @@ class CallConsumer(AsyncWebsocketConsumer):
 
     async def remove_user_from_room(self):
         redis = get_redis_client()
+
         await redis.srem(self.room_users_key, self.channel_name)
         users_count = await redis.scard(self.room_users_key)
 
