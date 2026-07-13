@@ -8,6 +8,7 @@ ROOM_LIMIT = 2
 ROOM_TTL_SECONDS = 60 * 60
 
 redis_client = None
+active_connections = {}
 
 JOIN_ROOM_SCRIPT = """
 local key = KEYS[1]
@@ -51,24 +52,27 @@ class CallConsumer(AsyncWebsocketConsumer):
         previous_count, users_count = await self.add_user_to_room()
 
         if previous_count == -1:
-            await self.send(text_data=json.dumps({
+            await self.send_json({
                 'type': 'room_full',
                 'message': 'Комната уже занята',
-            }))
+            })
             await self.close()
             return
 
         self.is_initiator = previous_count == 0
         self.joined_room = True
+        active_connections[self.channel_name] = self
 
-        await self.send(text_data=json.dumps({
+        await self.send_json({
             'type': 'connection_ready',
             'is_initiator': self.is_initiator,
-        }))
+        })
 
         await self.send_room_status(users_count)
 
     async def disconnect(self, close_code):
+        active_connections.pop(self.channel_name, None)
+
         if not getattr(self, 'joined_room', False):
             return
 
@@ -77,6 +81,7 @@ class CallConsumer(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
         data = json.loads(text_data)
+        await get_redis_client().expire(self.room_users_key, ROOM_TTL_SECONDS)
         await self.send_to_room(data, exclude_self=True)
 
     async def add_user_to_room(self):
@@ -117,10 +122,19 @@ class CallConsumer(AsyncWebsocketConsumer):
             if exclude_self and channel_name == self.channel_name:
                 continue
 
+            connection = active_connections.get(channel_name)
+
+            if connection:
+                await connection.send_json(message)
+                continue
+
             await self.channel_layer.send(channel_name, {
-                'type': 'send_message',
+                'type': 'relay_message',
                 'message': message,
             })
 
-    async def send_message(self, event):
-        await self.send(text_data=json.dumps(event['message']))
+    async def relay_message(self, event):
+        await self.send_json(event['message'])
+
+    async def send_json(self, data):
+        await self.send(text_data=json.dumps(data))
