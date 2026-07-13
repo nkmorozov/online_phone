@@ -5,7 +5,7 @@ from redis.asyncio import Redis
 
 
 ROOM_LIMIT = 2
-ROOM_TTL_SECONDS = 2 * 60
+ROOM_TTL_SECONDS = 60 * 60
 
 redis_client = None
 
